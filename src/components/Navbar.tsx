@@ -19,13 +19,13 @@ export default function Navbar() {
                     BunnyDEX
                 </Link>
 
-                {/* 2. Navigation Links (Now next to logo) */}
+                {/* 2. Navigation Links */}
                 <div className="flex items-center gap-6">
                     <Link
                         href="/"
                         className={`px-4 py-2 rounded-lg text-lg font-semibold transition-all duration-200 ${isActive('/')
-                                ? 'bg-gray-800 text-white shadow-sm' // Active State
-                                : 'text-gray-400 hover:text-white hover:bg-gray-800/50' // Hover Effect
+                            ? 'bg-gray-800 text-white shadow-sm'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
                             }`}
                     >
                         Swap
@@ -34,11 +34,22 @@ export default function Navbar() {
                     <Link
                         href="/pool"
                         className={`px-4 py-2 rounded-lg text-lg font-semibold transition-all duration-200 ${isActive('/pool')
-                                ? 'bg-gray-800 text-white shadow-sm'
-                                : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                            ? 'bg-gray-800 text-white shadow-sm'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
                             }`}
                     >
                         Pool
+                    </Link>
+
+                    {/* NEW: Dashboard Link */}
+                    <Link
+                        href="/dashboard"
+                        className={`px-4 py-2 rounded-lg text-lg font-semibold transition-all duration-200 ${isActive('/dashboard')
+                            ? 'bg-gray-800 text-white shadow-sm'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                            }`}
+                    >
+                        Analytics
                     </Link>
                 </div>
             </div>

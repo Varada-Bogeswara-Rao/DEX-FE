@@ -1,165 +1,328 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import {
+  useAccount,
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { ChevronDown, RefreshCcw, Loader2 } from 'lucide-react'; // Using lucide icons for modern look
+
 import { ROUTER_ABI } from '../abi/RouterABI';
+import { ERC20_ABI } from '../abi/ERC20ABI';
+import { TOKENS, Token } from '../lib/tokens'; // Assuming tokens.ts structure is {address, symbol, icon?}
 
-// -----------------------------------------------------------------
-// CONFIGURATION (Replace these with your actual values!)
-// -----------------------------------------------------------------
-const ROUTER_ADDRESS = '0x6E58d0EfC0DC9D99b42e542b81969269b3C5fFeD'; // <--- PASTE YOUR ROUTER ADDRESS HERE
+// --------------------------------------------------
+// CONFIGURATION
+// --------------------------------------------------
+const ROUTER_ADDRESS = '0x67e676F33852354F0Aa186528476903AD3Ba66cE';
+const MAX_APPROVAL_AMOUNT = parseEther('1000000000'); // Approving a large amount
 
-// Mock Token Addresses on Sepolia (WETH and UNI)
-// You can change these to whatever tokens you want to test with
-// KEEP WETH (TOKEN A) BY
-const TOKEN_A = '0xd9d534fe8B60F4b22eB2aBfF2Cbf7B9566773c2A';
-// UPDATE TOKEN B (Your New BunnyToken) B
-const TOKEN_B = '0x9AAb99fc4F512DF1b35940cA5d0bE50A31ec11C5';
-// -----------------------------------------------------------------
+// --------------------------------------------------
+// COMPONENTS (Refined Spinner & Token Selector)
+// --------------------------------------------------
+
+interface TokenSelectorProps {
+  label: string;
+  token: Token;
+  amount: string;
+  isInput: boolean;
+  onAmountChange: (value: string) => void;
+  onTokenChange: (token: Token) => void;
+  disabled: boolean;
+  isFetchingPrice: boolean;
+}
+
+const TokenSelector: React.FC<TokenSelectorProps> = ({
+  label,
+  token,
+  amount,
+  isInput,
+  onAmountChange,
+  onTokenChange,
+  disabled,
+  isFetchingPrice,
+}) => (
+  <div className="bg-gray-800 rounded-xl p-4 transition-colors duration-200 hover:border-blue-500/50 border border-transparent">
+    <div className="flex justify-between items-center mb-1">
+      <label className="text-sm font-medium text-gray-400">{label}</label>
+      <span className="text-xs text-gray-500">
+        Balance: {/* Placeholder for future balance integration */} 0.00
+      </span>
+    </div>
+
+    <div className="flex items-center space-x-3">
+      {/* AMOUNT INPUT/DISPLAY */}
+      <div className="grow">
+        {isInput ? (
+          <input
+            type="number"
+            placeholder="0.0"
+            value={amount}
+            onChange={(e) => onAmountChange(e.target.value)}
+            className="w-full text-3xl bg-transparent outline-none text-white placeholder-gray-600 font-mono"
+            min="0"
+          />
+        ) : (
+          <div className="text-3xl text-gray-300 font-mono min-h-10 flex items-center">
+            {isFetchingPrice ? (
+              <Loader2 className="animate-spin h-5 w-5 text-gray-500" />
+            ) : (
+              // Ensure output is displayed cleanly, maybe with fewer decimals if large
+              Number(amount).toFixed(6)
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* TOKEN SELECTOR */}
+      <select
+        value={token.symbol}
+        onChange={(e) =>
+          onTokenChange(TOKENS.find((t) => t.symbol === e.target.value)!)
+        }
+        className="bg-gray-700 text-white font-bold px-3 py-2 rounded-full cursor-pointer appearance-none pr-8 transition-colors hover:bg-gray-600 text-lg"
+        style={{ backgroundImage: 'none' }} // Remove default select arrow
+        disabled={disabled}
+      >
+        {TOKENS.map((t) => (
+          <option key={t.address} value={t.symbol}>
+            {t.symbol}
+          </option>
+        ))}
+      </select>
+      {/* Custom arrow for select */}
+      <ChevronDown className="h-4 w-4 text-gray-400 absolute right-6 top-1/2 -mt-2 pointer-events-none" />
+    </div>
+  </div>
+);
+
+// --------------------------------------------------
+// MAIN SWAP COMPONENT
+// --------------------------------------------------
 
 export default function SwapPage() {
   const { isConnected, address } = useAccount();
+
+  // TOKENS
+  const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
+  const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
+
+  // AMOUNTS
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('0');
+  const [isApproved, setIsApproved] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
-  // 1. Setup Write Hook (To send the Swap Transaction)
-  const { data: hash, writeContract, isPending } = useWriteContract();
+  // WAGMI HOOKS
+  const { data: hash, writeContract, isPending, error, reset } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess, isError: isTxError } =
+    useWaitForTransactionReceipt({ hash });
 
-  // 2. Setup Wait Hook (To show "Success" message)
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash,
+  // 1. ALLOWANCE CHECK
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: tokenIn.address,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [address!, ROUTER_ADDRESS],
+    query: { enabled: !!address, refetchInterval: 5000 }, // Refetch every 5s
   });
 
-  // 3. Setup Read Hook (To calculate price automatically)
-  // We only run this if the user has typed a number > 0
-  const { data: amountsOutData } = useReadContract({
+  // 2. PRICE QUOTE (getAmountsOut)
+  const { data: amountsOutData, isLoading: isFetchingPrice } = useReadContract({
     address: ROUTER_ADDRESS,
     abi: ROUTER_ABI,
     functionName: 'getAmountsOut',
     args: [
-      amountIn ? parseEther(amountIn) : 0n, // Convert string to BigInt (Wei)
-      [TOKEN_A, TOKEN_B] // The Path
+      amountIn ? parseEther(amountIn) : 0n,
+      [tokenIn.address, tokenOut.address],
     ],
     query: {
-      enabled: !!amountIn && Number(amountIn) > 0, // Only run if input exists
+      enabled: !!amountIn && Number(amountIn) > 0 && tokenIn.address !== tokenOut.address,
+      refetchInterval: 8000 // Refetch price every 8s
     },
   });
 
-  // When the contract returns the price, update the UI
+  // --- EFFECTS ---
+
+  // Update amountOut when amountsOutData changes
   useEffect(() => {
     if (amountsOutData) {
-      // amountsOutData returns an array [amountIn, amountOut]
-      // We want the second item (index 1)
-      const data = amountsOutData as bigint[];
-
-      const out = data[1];
-      setAmountOut(formatEther(out));
+      const out = (amountsOutData as bigint[])[1];
+      // Format to a more readable string
+      setAmountOut(Number(formatEther(out)).toFixed(6));
+    } else {
+      setAmountOut('0');
     }
   }, [amountsOutData]);
 
-  // 4. Handle the Swap Button Click
+  // Check Approval Status
+  useEffect(() => {
+    if (!allowance || !amountIn) {
+      setIsApproved(false);
+      return;
+    }
+    try {
+      setIsApproved((allowance as bigint) >= parseEther(amountIn));
+    } catch {
+      setIsApproved(false); // Handle invalid amountIn state
+    }
+
+  }, [allowance, amountIn]);
+
+  // Show Success Message and clear input on success
+  useEffect(() => {
+    if (isSuccess) {
+      setShowSuccess(true);
+      setAmountIn(''); // Clear input after successful swap
+      refetchAllowance(); // Re-check allowance immediately
+      setTimeout(() => setShowSuccess(false), 3000);
+      reset(); // Clear useWriteContract state
+    }
+  }, [isSuccess, refetchAllowance, reset]);
+
+  // --- HANDLERS ---
+
+  const switchTokens = () => {
+    setTokenIn(tokenOut);
+    setTokenOut(tokenIn);
+    setAmountIn('');
+    setAmountOut('0');
+  };
+
+  const approve = () => {
+    writeContract({
+      address: tokenIn.address,
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [ROUTER_ADDRESS, MAX_APPROVAL_AMOUNT],
+    });
+  };
+
   const handleSwap = () => {
-    if (!amountIn) return;
+    // SECURITY: Calculate minimum output with 0.5% slippage
+    if (!amountsOutData || Number(amountIn) <= 0) return;
+
+    const calculatedAmountOut = (amountsOutData as bigint[])[1];
+    // 0.5% slippage: 995/1000
+    const slippageNumerator = 995n;
+    const slippageDenominator = 1000n;
+    const amountOutMin = (calculatedAmountOut * slippageNumerator) / slippageDenominator;
 
     writeContract({
       address: ROUTER_ADDRESS,
       abi: ROUTER_ABI,
       functionName: 'swapExactTokensForTokens',
       args: [
-        parseEther(amountIn), // Amount In
-        0n, // Min Amount Out (0 for testing - strictly risky in prod!)
-        [TOKEN_A, TOKEN_B], // Path
-        address!, // To (Your Wallet)
-        BigInt(Math.floor(Date.now() / 1000) + 60 * 20), // Deadline (20 mins)
+        parseEther(amountIn),
+        amountOutMin, // Using calculated slippage
+        [tokenIn.address, tokenOut.address],
+        address!,
+        BigInt(Math.floor(Date.now() / 1000) + 1200),
       ],
     });
   };
 
+  const isButtonDisabled = !amountIn || Number(amountIn) <= 0 || isPending || isConfirming || tokenIn.address === tokenOut.address;
+  const isApproving = isPending || (isConfirming && hash);
+
+  // --- UI RENDER ---
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-[80vh] bg-gray-950 text-white px-4">
+    <div className="flex justify-center min-h-[80vh] items-center bg-gray-950 text-white p-4">
+      <div className="w-full max-w-md bg-gray-900 border border-gray-800 p-6 rounded-2xl shadow-2xl">
 
-      {/* THE SWAP CARD */}
-      <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-4 shadow-xl">
-
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">Swap</h2>
-          <span className="text-gray-400 text-sm">Slippage: Auto</span>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold">Token Swap</h2>
+          <RefreshCcw className="h-5 w-5 text-gray-500 cursor-pointer hover:text-white transition-colors" />
         </div>
 
-        {/* INPUT BOX (YOU PAY) */}
-        <div className="bg-gray-800 rounded-xl p-4 mb-2">
-          <label className="text-gray-400 text-sm mb-2 block">You Pay</label>
-          <div className="flex justify-between items-center">
-            <input
-              type="number"
-              placeholder="0.0"
-              value={amountIn}
-              onChange={(e) => setAmountIn(e.target.value)}
-              className="bg-transparent text-3xl outline-none text-white w-full placeholder-gray-600"
-            />
-            <div className="bg-gray-700 px-3 py-1 rounded-full flex items-center gap-2">
-              <span className="font-bold">BY</span>
-            </div>
-          </div>
-        </div>
+        {/* 1. INPUT TOKEN SELECTOR */}
+        <TokenSelector
+          label="You pay"
+          token={tokenIn}
+          amount={amountIn}
+          isInput={true}
+          onAmountChange={setAmountIn}
+          onTokenChange={setTokenIn}
+          disabled={false}
+          isFetchingPrice={false}
+        />
 
-        {/* ARROW ICON */}
+        {/* SWITCH BUTTON */}
         <div className="flex justify-center -my-3 relative z-10">
-          <div className="bg-gray-900 p-2 rounded-lg border border-gray-800">
-            ⬇️
-          </div>
+          <button
+            onClick={switchTokens}
+            className="bg-gray-950 p-3 rounded-full border-4 border-gray-900 text-white hover:bg-gray-800 transition-colors shadow-lg"
+            title="Switch Tokens"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-arrow-down-up h-5 w-5"><polyline points="10 13 15 18 20 13" /><path d="M15 18V6" /><polyline points="4 11 9 6 14 11" /><path d="M9 6v12" /></svg>
+          </button>
         </div>
 
-        {/* OUTPUT BOX (YOU RECEIVE) */}
-        <div className="bg-gray-800 rounded-xl p-4 mt-2 mb-6">
-          <label className="text-gray-400 text-sm mb-2 block">You Receive</label>
-          <div className="flex justify-between items-center">
-            <input
-              type="text"
-              placeholder="0.0"
-              value={amountOut}
-              disabled // Read-only
-              className="bg-transparent text-3xl outline-none text-gray-400 w-full cursor-not-allowed"
-            />
-            <div className="bg-gray-700 px-3 py-1 rounded-full flex items-center gap-2">
-              <span className="font-bold">BYN</span>
+        {/* 2. OUTPUT TOKEN SELECTOR */}
+        <TokenSelector
+          label="You receive (estimated)"
+          token={tokenOut}
+          amount={amountOut}
+          isInput={false}
+          onAmountChange={() => { }} // Disabled for output
+          onTokenChange={setTokenOut}
+          disabled={false}
+          isFetchingPrice={isFetchingPrice}
+        />
+
+        {/* PRICE INFORMATION/DETAILS */}
+        {amountsOutData && (
+          <div className="mt-4 p-3 bg-gray-800 rounded-xl text-sm text-gray-400">
+            <div className="flex justify-between">
+              <span>Price</span>
+              <span className="font-mono">1 {tokenIn.symbol} ≈ {Number(amountIn) > 0 && Number(amountOut) > 0 ? (Number(amountOut) / Number(amountIn)).toFixed(6) : 'N/A'} {tokenOut.symbol}</span>
             </div>
           </div>
-        </div>
+        )}
 
         {/* ACTION BUTTON */}
-        {!isConnected ? (
-          <div className="w-full flex justify-center">
-            <ConnectButton />
-          </div>
-        ) : (
-          <button
-            onClick={handleSwap}
-            disabled={isPending || isConfirming || !amountIn}
-            className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${isPending || isConfirming
-              ? 'bg-gray-600 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-              }`}
-          >
-            {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Swapping...' : 'Swap'}
-          </button>
-        )}
-
-        {/* SUCCESS MESSAGE */}
-        {isConfirmed && (
-          <div className="mt-4 p-3 bg-green-900/50 border border-green-800 text-green-200 rounded-lg text-center text-sm">
-            ✅ Swap Successful!
-            <a
-              href={`https://sepolia.etherscan.io/tx/${hash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="underline ml-2 font-bold"
+        <div className="mt-6">
+          {!isConnected ? (
+            <div className="w-full flex justify-center">
+              <ConnectButton />
+            </div>
+          ) : !isApproved ? (
+            <button
+              onClick={approve}
+              disabled={isButtonDisabled}
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled
+                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+                }`}
             >
-              View on Etherscan
-            </a>
+              {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
+              {isApproving ? 'Confirming Approval...' : `Approve ${tokenIn.symbol}`}
+            </button>
+          ) : (
+            <button
+              onClick={handleSwap}
+              disabled={isButtonDisabled}
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled
+                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                : 'bg-pink-600 hover:bg-pink-500 text-white'
+                }`}
+            >
+              {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
+              {isApproving ? 'Confirming Swap...' : 'Swap'}
+            </button>
+          )}
+        </div>
+
+        {/* STATUS MESSAGES */}
+        {showSuccess && <div className="mt-4 p-3 bg-green-900/50 border border-green-700 text-green-300 rounded-lg text-center text-sm animate-pulse">✅ Transaction Successful!</div>}
+        {(error || isTxError) && (
+          <div className="mt-4 p-3 bg-red-900/50 border border-red-700 text-red-300 rounded-lg text-sm wrap-break-word">
+            Error: {error ? error.message.split('\n')[0] : 'Transaction failed.'}
           </div>
         )}
-
       </div>
     </div>
   );

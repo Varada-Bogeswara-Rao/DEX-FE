@@ -1,13 +1,6 @@
-// frontend/src/abi/ERC20ABI.ts
+// src/abi/LPTokenABI.ts
 
-export const ERC20_ABI = [
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "owner", type: "address" }],
-    outputs: [{ name: "balance", type: "uint256" }],
-  },
+export const LpABI = [
   {
     type: "function",
     name: "allowance",
@@ -16,7 +9,7 @@ export const ERC20_ABI = [
       { name: "owner", type: "address" },
       { name: "spender", type: "address" },
     ],
-    outputs: [{ name: "amount", type: "uint256" }],
+    outputs: [{ type: "uint256" }],
   },
   {
     type: "function",
@@ -24,32 +17,49 @@ export const ERC20_ABI = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
+      { name: "value", type: "uint256" },
     ],
-    outputs: [{ name: "success", type: "bool" }],
+    outputs: [{ type: "bool" }],
   },
   {
     type: "function",
-    name: "transfer",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "burn",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "mint",
     stateMutability: "nonpayable",
     inputs: [
       { name: "to", type: "address" },
       { name: "amount", type: "uint256" },
     ],
-    outputs: [{ name: "success", type: "bool" }],
+    outputs: [],
   },
   {
     type: "function",
-    name: "decimals",
+    name: "pair",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "uint8" }],
+    outputs: [{ type: "address" }],
   },
   {
     type: "function",
-    name: "symbol",
+    name: "totalSupply",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "string" }],
+    outputs: [{ type: "uint256" }],
   },
 ] as const;
