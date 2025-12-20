@@ -15,10 +15,24 @@ function MyApp({ Component, pageProps }: AppProps) {
       <QueryClientProvider client={client}>
         <RainbowKitProvider theme={darkTheme()}> {/* Added Dark Theme for vibes */}
 
-          {/* Navbar sits here, above the page content */}
-          <div className="min-h-screen bg-gray-950 text-white">
+
+          {/* Global Background */}
+          <div className="min-h-screen bg-[#050505] text-white relative overflow-hidden font-sans selection:bg-pink-500/30">
+
+            {/* Background Blobs */}
+            <div className="fixed inset-0 z-0 pointer-events-none">
+              {/* Top Center-Right Blob (Pink/Purple) */}
+              <div className="absolute top-[-10%] right-[-5%] w-[600px] h-[600px] bg-pink-600/20 rounded-full blur-[120px] mix-blend-screen opacity-60 animate-pulse-slow"></div>
+
+              {/* Bottom Left Blob (Blue/Cyan) */}
+              <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[100px] mix-blend-screen opacity-50"></div>
+
+              {/* Center subtle glow */}
+              <div className="absolute top-[20%] left-[30%] w-[800px] h-[800px] bg-purple-900/10 rounded-full blur-[150px] mix-blend-screen"></div>
+            </div>
+
             <Navbar />
-            <main className="p-4">
+            <main className="relative z-10 p-4">
               <Component {...pageProps} />
             </main>
           </div>

@@ -1,27 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
-import { parseEther, formatEther, parseUnits } from 'viem'; // Imported parseUnits for general safety
+import { parseEther, formatEther } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { RefreshCcw, Loader2, Minus, Plus } from 'lucide-react'; // Using Lucide icons for UI
+import { RefreshCcw, Loader2, Minus, Plus, ChevronDown, Info, AlertOctagon } from 'lucide-react';
 
-// --- Contract ABIs (Assumed available) ---
 import { ROUTER_ABI } from '../abi/RouterABI';
 import { ERC20_ABI } from '../abi/ERC20ABI';
 import { FactoryABI } from '../abi/FactoryABI';
-import { LpABI } from '../abi/LpABI';
-
-// --- Token Data (Assumed structure from your previous context) ---
 import { TOKENS, Token } from '../lib/tokens';
+import TokenModal from '../components/TokenModal';
 
 // -----------------------------------------------------------------
-// CONFIGURATION
+// CONFIG
 // -----------------------------------------------------------------
 const FACTORY_ADDRESS = '0x38CfF817498fcA61e9f71Eee195d546E13F3bB49';
 const ROUTER_ADDRESS = '0x67e676F33852354F0Aa186528476903AD3Ba66cE';
-// MAX_APPROVAL_AMOUNT is no longer needed
-// -----------------------------------------------------------------
 
-// ABI to read Reserves + Token0 + lpToken (Combined for fewer read calls)
 const PAIR_RESERVES_ABI = [
     {
         "constant": true, "inputs": [], "name": "getReserves",
@@ -44,81 +38,85 @@ const PAIR_RESERVES_ABI = [
 ] as const;
 
 // -----------------------------------------------------------------
-// REUSABLE COMPONENTS
+// COMPONENTS
 // -----------------------------------------------------------------
 
-const Spinner = () => (
-    <Loader2 className="animate-spin h-5 w-5 text-white" />
-);
+const Spinner = () => <Loader2 className="animate-spin h-5 w-5 text-white/50" />;
 
-interface TokenSelectInputProps {
+const TokenSelectInput: React.FC<{
     token: Token;
     amount: string;
     label: string;
     isLP?: boolean;
     onChange: (value: string) => void;
-    onTokenChange: (token: Token) => void;
-}
-
-const TokenSelectInput: React.FC<TokenSelectInputProps> = ({ token, amount, label, isLP = false, onChange, onTokenChange }) => (
-    <div className="bg-gray-800 rounded-xl p-4 border border-transparent">
-        <label className="text-sm font-medium text-gray-400 block mb-1">{label}</label>
-        <div className="flex items-center space-x-3">
+    onTokenClick?: () => void;
+}> = ({ token, amount, label, isLP = false, onChange, onTokenClick }) => (
+    <div className="bg-black/20 hover:bg-black/40 backdrop-blur-sm rounded-2xl p-4 border border-white/5 transition-all group focus-within:border-white/10 focus-within:bg-black/40">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-3 block px-1 group-focus-within:text-gray-400 transition-colors">{label}</label>
+        <div className="flex items-center gap-4">
             <input
-                type="number"
-                placeholder="0.0"
+                type="text"
+                pattern="^[0-9]*[.,]?[0-9]*$"
+                placeholder="0.00"
                 value={amount}
-                onChange={(e) => onChange(e.target.value)}
-                className="w-full text-2xl bg-transparent outline-none text-white placeholder-gray-600 font-mono"
-                min="0"
-
+                onChange={(e) => {
+                    if (e.target.value === '' || /^[0-9]*[.,]?[0-9]*$/.test(e.target.value)) {
+                        onChange(e.target.value);
+                    }
+                }}
+                className="w-full text-3xl bg-transparent outline-none text-white placeholder-gray-700 font-light"
             />
-           
-            {/* TOKEN SELECTOR (Dropdown) */}
-            <select
-                value={token.symbol}
-                onChange={(e) => onTokenChange(TOKENS.find(t => t.symbol === e.target.value)!)}
-                className="bg-gray-700 text-white font-bold px-3 py-2 rounded-full cursor-pointer appearance-none transition-colors hover:bg-gray-600 text-lg"
-                disabled={isLP}
-            >
-                {TOKENS.map(t => (
-                    <option key={t.address} value={t.symbol}>{t.symbol}</option>
-                ))}
-            </select>
+
+            {onTokenClick ? (
+                <button
+                    onClick={onTokenClick}
+                    className="flex-shrink-0 flex items-center gap-2 bg-black/40 hover:bg-white/5 text-white font-medium px-4 py-2 rounded-xl cursor-pointer transition-all border border-white/5 hover:border-white/10"
+                >
+                    <div className="w-5 h-5 rounded-full bg-indigo-500/50 flex items-center justify-center text-[10px]">{token.symbol[0]}</div>
+                    {token.symbol} <ChevronDown className="w-4 h-4 text-gray-400" />
+                </button>
+            ) : (
+                <div className="flex-shrink-0 flex items-center gap-2 bg-white/5 text-gray-400 font-medium px-4 py-2 rounded-xl border border-white/5 cursor-default">
+                    {token.symbol}
+                </div>
+            )}
         </div>
     </div>
 );
 
-
 // -----------------------------------------------------------------
-// MAIN COMPONENT
+// PAGE
 // -----------------------------------------------------------------
 
 export default function PoolPage() {
     const { isConnected, address } = useAccount();
 
-    // --- STATE ---
     const [isAddMode, setIsAddMode] = useState(true);
     const [tokenA, setTokenA] = useState<Token>(TOKENS[0]);
     const [tokenB, setTokenB] = useState<Token>(TOKENS[1]);
-    // FIX 2: amountA/B/LP are NOT cleared in useEffect, they are cleared in handler functions
+
+    // MODAL
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectingMode, setSelectingMode] = useState<'A' | 'B'>('A');
+
+    // STATES
     const [amountA, setAmountA] = useState('');
     const [amountB, setAmountB] = useState('');
     const [amountLPRemove, setAmountLPRemove] = useState('');
     const [currentStep, setCurrentStep] = useState('');
     const [showSuccess, setShowSuccess] = useState(false);
 
-    // --- WRITE HOOKS ---
     const { data: hash, writeContract, isPending, error, reset } = useWriteContract();
     const { isLoading: isConfirming, isSuccess: isConfirmed, isError: isTxError } = useWaitForTransactionReceipt({ hash });
 
-    // --- SORT TOKENS & DERIVE PAIR ADDRESS ---
+    // SORTED TOKENS
     const [token0, token1] = useMemo(() =>
         tokenA.address.toLowerCase() < tokenB.address.toLowerCase()
             ? [tokenA, tokenB]
             : [tokenB, tokenA]
         , [tokenA, tokenB]);
 
+    // WAAGMI READS
     const { data: pairAddress, refetch: refetchPairAddress } = useReadContract({
         address: FACTORY_ADDRESS,
         abi: FactoryABI,
@@ -128,17 +126,15 @@ export default function PoolPage() {
 
     const poolExists = pairAddress && pairAddress !== '0x0000000000000000000000000000000000000000';
 
-    // --- READ HOOKS ---
-    // Using PAIR_RESERVES_ABI to read lpToken, which must be public in Pair.sol
     const { data: lpTokenAddress, refetch: refetchLpTokenAddress } = useReadContract({
         address: pairAddress as `0x${string}`,
-        abi: PAIR_RESERVES_ABI, // Corrected ABI
+        abi: PAIR_RESERVES_ABI,
         functionName: 'lpToken',
         query: { enabled: !!pairAddress && poolExists },
     });
 
-    const { data: lpBalance, isLoading: isBalanceLoading, refetch: refetchLpBalance } = useReadContract({
-        address: lpTokenAddress! as `0x${string}`, // Safe assertion
+    const { data: lpBalance, refetch: refetchLpBalance } = useReadContract({
+        address: lpTokenAddress! as `0x${string}`,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [address!],
@@ -159,48 +155,29 @@ export default function PoolPage() {
         query: { enabled: poolExists }
     });
 
-    // --- AUTO-CALCULATE LOGIC ---
+    // HELPERS
     const calculateOtherAmount = (value: string, isFieldA: boolean) => {
         if (!value || !reserves || !token0Address) return '';
-
         const [reserve0, reserve1] = reserves as [bigint, bigint];
-        let reserveIn = 0n;
-        let reserveOut = 0n;
-
-        // Determine which reserve is for tokenA/In and tokenB/Out
+        let reserveIn = 0n, reserveOut = 0n;
         const tokenInAddress = isFieldA ? tokenA.address : tokenB.address;
-        const tokenOutAddress = isFieldA ? tokenB.address : tokenA.address;
 
         if (token0Address.toLowerCase() === tokenInAddress.toLowerCase()) {
-            reserveIn = reserve0;
-            reserveOut = reserve1;
+            reserveIn = reserve0; reserveOut = reserve1;
         } else {
-            reserveIn = reserve1;
-            reserveOut = reserve0;
+            reserveIn = reserve1; reserveOut = reserve0;
         }
-
         if (reserveIn === 0n || reserveOut === 0n) return '';
-
         try {
-            // Assuming 18 decimals for simplicity, but in a multi-decimal scenario, use parseUnits
             const valBig = parseEther(value);
-            // Quote logic: amountOut = (amountIn * reserveOut) / reserveIn
-            const calculatedOut = (valBig * reserveOut) / reserveIn;
-            return formatEther(calculatedOut);
-        } catch (e) {
-            return '';
-        }
+            return formatEther((valBig * reserveOut) / reserveIn);
+        } catch { return ''; }
     };
 
-    // --- EVENT HANDLERS ---
     const handleAmountAChange = (val: string) => {
         setAmountA(val);
         if (isAddMode && poolExists) {
-            const autoB = calculateOtherAmount(val, true);
-            setAmountB(autoB);
-        } else if (!poolExists) {
-            // If pool doesn't exist, user is setting the initial ratio, so no auto-fill
-            setAmountB(amountB);
+            setAmountB(calculateOtherAmount(val, true));
         }
     };
 
@@ -211,261 +188,174 @@ export default function PoolPage() {
         }
     };
 
-    // --- CONTRACT CALLS ---
-    // FIX 1: Accepts dynamic amount instead of using MAX_APPROVAL_AMOUNT
+    const openTokenModal = (mode: 'A' | 'B') => {
+        setSelectingMode(mode);
+        setIsModalOpen(true);
+    };
+
+    const handleTokenSelect = (token: Token) => {
+        if (selectingMode === 'A') {
+            if (token.address === tokenB.address) setTokenB(tokenA);
+            setTokenA(token);
+        } else {
+            if (token.address === tokenA.address) setTokenA(tokenB);
+            setTokenB(token);
+        }
+        setIsModalOpen(false);
+    };
+
     const handleApprove = (tokenAddr: `0x${string}`, amount: string, stepName: string) => {
         if (!amount || Number(amount) <= 0) return;
         setCurrentStep(stepName);
-
-        // Approve the exact amount the user wants to deposit/burn
-        const amountToApprove = parseEther(amount);
-
         writeContract({
-            address: tokenAddr,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [ROUTER_ADDRESS, amountToApprove], // Dynamic Approval
+            address: tokenAddr, abi: ERC20_ABI, functionName: 'approve', args: [ROUTER_ADDRESS, parseEther(amount)],
         });
     };
 
     const handleAddLiquidity = () => {
-        if (!amountA || !amountB || Number(amountA) <= 0 || Number(amountB) <= 0) return;
+        if (!amountA || !amountB) return;
         setCurrentStep('add');
-
-        // SAFETY: Calculate min amounts with 0.5% slippage (995/1000)
-        const slippageNumerator = 995n;
-        const slippageDenominator = 1000n;
-
-        const amountA_bn = parseEther(amountA);
-        const amountB_bn = parseEther(amountB);
-
-        const amountAMin = (amountA_bn * slippageNumerator) / slippageDenominator;
-        const amountBMin = (amountB_bn * slippageNumerator) / slippageDenominator;
-
+        const aBN = parseEther(amountA), bBN = parseEther(amountB);
         writeContract({
-            address: ROUTER_ADDRESS,
-            abi: ROUTER_ABI,
-            functionName: 'addLiquidity',
-            args: [
-                tokenA.address,
-                tokenB.address,
-                amountA_bn,
-                amountB_bn,
-                amountAMin, // With slippage
-                amountBMin, // With slippage
-                address!,
-                BigInt(Math.floor(Date.now() / 1000) + 1200)
-            ],
+            address: ROUTER_ADDRESS, abi: ROUTER_ABI, functionName: 'addLiquidity',
+            args: [tokenA.address, tokenB.address, aBN, bBN, (aBN * 995n) / 1000n, (bBN * 995n) / 1000n, address!, BigInt(Math.floor(Date.now() / 1000) + 1200)],
         });
-        // FIX 2: Clear state immediately after submission
-        setAmountA('');
-        setAmountB('');
+        setAmountA(''); setAmountB('');
     };
 
     const handleRemoveLiquidity = () => {
-        if (!amountLPRemove || Number(amountLPRemove) <= 0) return;
+        if (!amountLPRemove) return;
         setCurrentStep('remove');
-
-        // NOTE: Still using 0n for min returns. For production, a quote function is needed.
         writeContract({
-            address: ROUTER_ADDRESS,
-            abi: ROUTER_ABI,
-            functionName: 'removeLiquidity',
-            args: [
-                tokenA.address,
-                tokenB.address,
-                parseEther(amountLPRemove),
-                0n,
-                0n,
-                address!,
-                BigInt(Math.floor(Date.now() / 1000) + 1200)
-            ],
+            address: ROUTER_ADDRESS, abi: ROUTER_ABI, functionName: 'removeLiquidity',
+            args: [tokenA.address, tokenB.address, parseEther(amountLPRemove), 0n, 0n, address!, BigInt(Math.floor(Date.now() / 1000) + 1200)],
         });
-        // FIX 2: Clear state immediately after submission
         setAmountLPRemove('');
     };
 
-    // --- EFFECTS ---
     useEffect(() => {
         if (isConfirmed) {
             setShowSuccess(true);
-            // No need to clear A/B/LP here anymore, done in the handlers
-            refetchLpBalance();
-            refetchReserves();
-            refetchPairAddress();
-            refetchLpTokenAddress();
+            refetchLpBalance(); refetchReserves(); refetchPairAddress(); refetchLpTokenAddress();
             setTimeout(() => setShowSuccess(false), 3000);
-            reset(); // Clear useWriteContract state
+            reset();
         }
     }, [isConfirmed, refetchLpBalance, refetchReserves, refetchPairAddress, refetchLpTokenAddress, reset]);
 
-    // --- UI RENDER VARS ---
     const isActionPending = isPending || isConfirming;
     const isButtonDisabled = !isConnected || isActionPending || tokenA.address === tokenB.address;
-    const formattedLPBalance = lpBalance ? Number(formatEther(lpBalance as bigint)).toFixed(4) : '0.0000';
-    const pairSymbol = `${tokenA.symbol}-${tokenB.symbol}`;
+    const pairSymbol = `${tokenA.symbol}/${tokenB.symbol}`;
+    const formattedLPBalance = lpBalance ? Number(formatEther(lpBalance as bigint)).toFixed(4) : '0.00';
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-[80vh] bg-gray-950 text-white px-4">
-            <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="flex flex-col items-center justify-center min-h-[80vh] text-white px-4">
 
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold">Liquidity Pool</h2>
-                    <RefreshCcw className="h-5 w-5 text-gray-500 cursor-pointer hover:text-white transition-colors" />
+            {/* MAIN CARD */}
+            <div className="w-full max-w-[500px] bg-black/40 backdrop-blur-2xl border border-white/5 rounded-[32px] p-6 shadow-2xl relative">
+
+                {/* HEADER */}
+                <div className="flex justify-between items-center mb-8 px-2">
+                    <div>
+                        <h2 className="text-xl font-medium text-white">Pool Management</h2>
+                        <span className="text-xs text-gray-500 font-mono">V2 LIQUIDITY</span>
+                    </div>
+                    <button onClick={() => { refetchReserves(); refetchLpBalance(); }} className="p-2 hover:bg-white/5 rounded-full transition-colors text-gray-500 hover:text-white">
+                        <RefreshCcw className="h-4 w-4" />
+                    </button>
                 </div>
 
                 {/* TABS */}
-                <div className="flex bg-gray-800 p-1 rounded-xl mb-6">
-                    <button onClick={() => setIsAddMode(true)} className={`flex-1 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center gap-2 ${isAddMode ? 'bg-gray-700 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                        <Plus className='h-4 w-4' /> Add
+                <div className="flex bg-black/30 p-1.5 rounded-2xl mb-8 border border-white/5">
+                    <button onClick={() => setIsAddMode(true)} className={`flex-1 py-2.5 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2 ${isAddMode ? 'bg-[#1a1a1a] text-white shadow-lg border border-white/5' : 'text-gray-500 hover:text-white'}`}>
+                        <Plus className='h-4 w-4' /> Deposit
                     </button>
-                    <button onClick={() => setIsAddMode(false)} className={`flex-1 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center gap-2 ${!isAddMode ? 'bg-gray-700 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                        <Minus className='h-4 w-4' /> Remove
+                    <button onClick={() => setIsAddMode(false)} className={`flex-1 py-2.5 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2 ${!isAddMode ? 'bg-[#1a1a1a] text-white shadow-lg border border-white/5' : 'text-gray-500 hover:text-white'}`}>
+                        <Minus className='h-4 w-4' /> Withdraw
                     </button>
                 </div>
 
-                {/* LP BALANCE */}
-                {poolExists && (
-                    <div className="bg-blue-900/30 border border-blue-800 rounded-lg p-3 mb-6 text-center">
-                        <p className="text-gray-400 text-sm">Your {pairSymbol} LP Share</p>
-                        <p className="text-2xl font-bold text-blue-200 min-h-8">
-                            {formattedLPBalance} <span className="text-sm ml-1 text-blue-400">LP Tokens</span>
-                        </p>
-                    </div>
-                )}
-
-
-                {/* TOKEN SELECTORS */}
-                <div className="flex gap-4 mb-4">
-                    <div className="w-1/2">
-                        <label className="text-xs text-gray-400 block mb-1">Token A</label>
-                        <select
-                            value={tokenA.symbol}
-                            onChange={(e) => setTokenA(TOKENS.find(t => t.symbol === e.target.value)!)}
-                            className="w-full bg-gray-800 p-2 rounded-lg font-bold text-white cursor-pointer"
-                        >
-                            {TOKENS.map(t => <option key={t.address} value={t.symbol}>{t.symbol}</option>)}
-                        </select>
-                    </div>
-                    <div className="w-1/2">
-                        <label className="text-xs text-gray-400 block mb-1">Token B</label>
-                        <select
-                            value={tokenB.symbol}
-                            onChange={(e) => setTokenB(TOKENS.find(t => t.symbol === e.target.value)!)}
-                            className="w-full bg-gray-800 p-2 rounded-lg font-bold text-white cursor-pointer"
-                        >
-                            {TOKENS.map(t => <option key={t.address} value={t.symbol}>{t.symbol}</option>)}
-                        </select>
-                    </div>
-                </div>
-
+                {/* WARNINGS */}
                 {tokenA.address === tokenB.address && (
-                    <div className="bg-red-900/30 border border-red-700 text-red-300 p-3 rounded-lg text-sm mb-4">
-                        ❌ Cannot create a pool with identical tokens.
+                    <div className="flex items-center gap-3 p-4 mb-6 rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-sm">
+                        <AlertOctagon className="h-5 w-5" /> Select different tokens.
                     </div>
                 )}
-
                 {!poolExists && tokenA.address !== tokenB.address && isAddMode && (
-                    <div className="bg-yellow-900/30 border border-yellow-700 text-yellow-300 p-3 rounded-lg text-sm mb-4">
-                        ⚠️ No pool found for {pairSymbol}. The first deposit will initialize it.
+                    <div className="flex items-center gap-3 p-4 mb-6 rounded-xl bg-blue-500/5 border border-blue-500/10 text-blue-400 text-sm">
+                        <Info className="h-5 w-5" /> You are creating a new pool.
                     </div>
                 )}
 
-                {!isConnected ? <div className="flex justify-center"><ConnectButton /></div> : (
-                    <>
-                        {/* ADD LIQUIDITY MODE */}
-                        {isAddMode && (
-                            <div className="space-y-4">
-                                <TokenSelectInput
-                                    token={tokenA}
-                                    amount={amountA}
-                                    onChange={handleAmountAChange}
-                                    onTokenChange={setTokenA}
-                                    label={`Amount of ${tokenA.symbol}`}
-                                />
-                                <TokenSelectInput
-                                    token={tokenB}
-                                    amount={amountB}
-                                    onChange={handleAmountBChange}
-                                    onTokenChange={setTokenB}
-                                    label={`Amount of ${tokenB.symbol} (Calculated: ${poolExists ? 'Balanced' : 'Manual'})`}
-                                />
 
-                                <div className="grid grid-cols-2 gap-3 pt-2">
-                                    <button
-                                        onClick={() => handleApprove(tokenA.address, amountA, 'approveA')}
-                                        disabled={isButtonDisabled || !amountA || Number(amountA) <= 0}
-                                        className={`py-3 rounded-xl font-bold text-sm transition flex justify-center items-center gap-2 ${isButtonDisabled || !amountA ? 'bg-gray-700 text-gray-400' : 'bg-blue-600 hover:bg-blue-500'}`}
-                                    >
-                                        {isActionPending && currentStep === 'approveA' && <Spinner />} Approve {tokenA.symbol}
+                {!isConnected ? (
+                    <div className="flex justify-center w-full py-8 [&>button]:!w-full [&>button]:!h-14 [&>button]:!bg-[#311c31]/80 [&>button]:!text-[#fc72ff] [&>button]:!font-bold [&>button]:!rounded-2xl">
+                        <ConnectButton />
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+
+                        {/* ADD MODE */}
+                        {isAddMode && (
+                            <>
+                                <TokenSelectInput token={tokenA} amount={amountA} onChange={handleAmountAChange} onTokenClick={() => openTokenModal('A')} label="Token 01" />
+                                <div className="flex justify-center -my-3 relative z-10"><div className="bg-[#1a1a1a] p-1.5 rounded-lg border border-white/5"><Plus className="w-4 h-4 text-gray-500" /></div></div>
+                                <TokenSelectInput token={tokenB} amount={amountB} onChange={handleAmountBChange} onTokenClick={() => openTokenModal('B')} label="Token 02" />
+
+                                <div className="pt-4 grid grid-cols-2 gap-3">
+                                    <button disabled={isButtonDisabled || !amountA} onClick={() => handleApprove(tokenA.address, amountA, 'approveA')} className="h-12 rounded-xl bg-white/5 hover:bg-white/10 text-white font-semibold text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+                                        {isActionPending && currentStep === 'approveA' ? <Spinner /> : `Approve ${tokenA.symbol}`}
                                     </button>
-                                    <button
-                                        onClick={() => handleApprove(tokenB.address, amountB, 'approveB')}
-                                        disabled={isButtonDisabled || !amountB || Number(amountB) <= 0}
-                                        className={`py-3 rounded-xl font-bold text-sm transition flex justify-center items-center gap-2 ${isButtonDisabled || !amountB ? 'bg-gray-700 text-gray-400' : 'bg-blue-600 hover:bg-blue-500'}`}
-                                    >
-                                        {isActionPending && currentStep === 'approveB' && <Spinner />} Approve {tokenB.symbol}
+                                    <button disabled={isButtonDisabled || !amountB} onClick={() => handleApprove(tokenB.address, amountB, 'approveB')} className="h-12 rounded-xl bg-white/5 hover:bg-white/10 text-white font-semibold text-sm disabled:opacity-30 disabled:cursor-not-allowed">
+                                        {isActionPending && currentStep === 'approveB' ? <Spinner /> : `Approve ${tokenB.symbol}`}
                                     </button>
                                 </div>
-                                <button
-                                    onClick={handleAddLiquidity}
-                                    disabled={isButtonDisabled || !amountA || !amountB || Number(amountA) <= 0 || Number(amountB) <= 0}
-                                    className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled || !amountA || !amountB ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-pink-600 hover:bg-pink-500 text-white'}`}
-                                >
-                                    {isActionPending && currentStep === 'add' && <Spinner />} Add Liquidity
+                                <button onClick={handleAddLiquidity} disabled={isButtonDisabled || !amountA || !amountB} className="w-full h-14 mt-2 rounded-xl bg-[#fc72ff] hover:opacity-90 text-white font-bold text-lg shadow-[0_0_20px_rgba(252,114,255,0.3)] disabled:opacity-50 disabled:shadow-none disabled:bg-white/5 disabled:text-gray-500 transition-all">
+                                    {isActionPending && currentStep === 'add' ? 'Supplying...' : 'Add Liquidity'}
                                 </button>
-                            </div>
+                            </>
                         )}
 
-                        {/* REMOVE LIQUIDITY MODE */}
-                        {!isAddMode && (
-                            <div className="space-y-4">
-                                {poolExists ? (
-                                    <>
-                                        <TokenSelectInput
-                                            token={{ chainId: tokenA.chainId, address: lpTokenAddress! as `0x${string}`, symbol: pairSymbol, decimals: 18, name: `${pairSymbol} LP` }}
-                                            amount={amountLPRemove}
-                                            onChange={setAmountLPRemove}
-                                            onTokenChange={() => { }}
-                                           label={`LP Tokens to Burn (Your Balance: ${formattedLPBalance})`}
-                                            isLP={true}
-                                        />
+                        {/* REMOVE MODE */}
+                        {!isAddMode && poolExists && (
+                            <>
+                                <div className="p-4 rounded-2xl bg-white/5 border border-white/5 mb-4 flex justify-between items-center px-6">
+                                    <span className="text-gray-400 text-sm">Your Position</span>
+                                    <span className="text-2xl font-light text-white">{formattedLPBalance} <span className="text-sm text-gray-600 font-bold">LP</span></span>
+                                </div>
 
-                                        <button
-                                            onClick={() => handleApprove(lpTokenAddress! as `0x${string}`, amountLPRemove, 'approveLP')}
-                                            disabled={isButtonDisabled || !amountLPRemove || Number(amountLPRemove) <= 0 || !lpTokenAddress}
-                                            className={`w-full py-3 rounded-xl font-bold text-sm transition flex justify-center items-center gap-2 ${isButtonDisabled || !amountLPRemove ? 'bg-gray-700 text-gray-400' : 'bg-blue-600 hover:bg-blue-500'}`}
-                                        >
-                                            {isActionPending && currentStep === 'approveLP' && <Spinner />} Approve LP Token
-                                        </button>
-                                        <button
-                                            onClick={handleRemoveLiquidity}
-                                            disabled={isButtonDisabled || !amountLPRemove || Number(amountLPRemove) <= 0 || !lpTokenAddress}
-                                            className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled || !amountLPRemove ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white'}`}
-                                        >
-                                            {isActionPending && currentStep === 'remove' && <Spinner />} Remove Liquidity
-                                        </button>
-                                    </>
-                                ) : (
-                                    <div className="bg-gray-800/50 p-6 rounded-xl text-center text-gray-400">
-                                        No active {pairSymbol} pool to remove liquidity from.
-                                    </div>
-                                )}
-                            </div>
+                                <TokenSelectInput token={{ ...tokenA, symbol: 'LP Tokens' }} amount={amountLPRemove} label="Amount to Remove" isLP onChange={setAmountLPRemove} />
+
+                                <button onClick={() => handleApprove(lpTokenAddress! as `0x${string}`, amountLPRemove, 'approveLP')} disabled={isButtonDisabled || !amountLPRemove} className="w-full h-12 mt-4 rounded-xl bg-white/5 hover:bg-white/10 text-white font-semibold text-sm disabled:opacity-30">
+                                    {isActionPending && currentStep === 'approveLP' ? 'Approving...' : 'Approve Spend'}
+                                </button>
+
+                                <button onClick={handleRemoveLiquidity} disabled={isButtonDisabled || !amountLPRemove} className="w-full h-14 mt-2 rounded-xl bg-red-500/80 hover:bg-red-500 text-white font-bold text-lg shadow-[0_0_20px_rgba(220,38,38,0.3)] disabled:opacity-50 disabled:shadow-none disabled:bg-white/5 disabled:text-gray-500 transition-all">
+                                    {isActionPending && currentStep === 'remove' ? 'Burning...' : 'Remove Liquidity'}
+                                </button>
+                            </>
                         )}
-                    </>
-                )}
+                        {!isAddMode && !poolExists && (
+                            <div className="text-center py-12 text-gray-500">No active pool found.</div>
+                        )}
 
-                {/* STATUS MESSAGES */}
-                {showSuccess && (
-                    <div className="mt-4 p-3 bg-green-900/50 border border-green-800 text-green-200 rounded-lg text-center text-sm animate-pulse">
-                        {currentStep === 'add' && `✅ Liquidity Added! Received ${pairSymbol} LP tokens.`}
-                        {currentStep === 'remove' && "🔥 Liquidity Removed! Tokens returned."}
-                        {currentStep.includes('approve') && "✅ Approved! Now continue."}
                     </div>
                 )}
-                {(error || isTxError) && <div className="mt-4 p-3 bg-red-900/50 border border-red-800 text-red-200 rounded-lg text-sm wrap-break-word">Error: {error?.message.split('\n')[0] || 'Transaction failed.'}</div>}
             </div>
+
+            {/* NOTIFICATIONS */}
+            {showSuccess && (
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 px-6 py-3 bg-[#1a1a1a] border border-green-500/30 text-green-400 rounded-full shadow-2xl flex items-center gap-3 backdrop-blur-xl animate-fade-in-up z-50">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-sm font-medium">Transaction confirmed successfully.</span>
+                </div>
+            )}
+
+            <TokenModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSelect={handleTokenSelect}
+                selectedToken={selectingMode === 'A' ? tokenA : tokenB}
+            />
         </div>
     );
 }

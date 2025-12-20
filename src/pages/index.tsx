@@ -7,96 +7,90 @@ import {
 } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { ChevronDown, RefreshCcw, Loader2 } from 'lucide-react'; // Using lucide icons for modern look
+import { ChevronDown, ArrowDown, Settings, Loader2 } from 'lucide-react';
 
 import { ROUTER_ABI } from '../abi/RouterABI';
 import { ERC20_ABI } from '../abi/ERC20ABI';
-import { TOKENS, Token } from '../lib/tokens'; // Assuming tokens.ts structure is {address, symbol, icon?}
+import { TOKENS, Token } from '../lib/tokens';
+import TokenModal from '../components/TokenModal';
 
 // --------------------------------------------------
 // CONFIGURATION
 // --------------------------------------------------
 const ROUTER_ADDRESS = '0x67e676F33852354F0Aa186528476903AD3Ba66cE';
-const MAX_APPROVAL_AMOUNT = parseEther('1000000000'); // Approving a large amount
+const MAX_APPROVAL_AMOUNT = parseEther('1000000000');
 
 // --------------------------------------------------
-// COMPONENTS (Refined Spinner & Token Selector)
+// COMPONENTS 
 // --------------------------------------------------
 
-interface TokenSelectorProps {
+interface TokenInputProps {
   label: string;
   token: Token;
   amount: string;
-  isInput: boolean;
   onAmountChange: (value: string) => void;
-  onTokenChange: (token: Token) => void;
-  disabled: boolean;
-  isFetchingPrice: boolean;
+  onTokenClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
 }
 
-const TokenSelector: React.FC<TokenSelectorProps> = ({
+const TokenInput = ({
   label,
   token,
   amount,
-  isInput,
   onAmountChange,
-  onTokenChange,
-  disabled,
-  isFetchingPrice,
-}) => (
-  <div className="bg-gray-800 rounded-xl p-4 transition-colors duration-200 hover:border-blue-500/50 border border-transparent">
-    <div className="flex justify-between items-center mb-1">
-      <label className="text-sm font-medium text-gray-400">{label}</label>
-      <span className="text-xs text-gray-500">
-        Balance: {/* Placeholder for future balance integration */} 0.00
-      </span>
-    </div>
-
-    <div className="flex items-center space-x-3">
-      {/* AMOUNT INPUT/DISPLAY */}
-      <div className="grow">
-        {isInput ? (
-          <input
-            type="number"
-            placeholder="0.0"
-            value={amount}
-            onChange={(e) => onAmountChange(e.target.value)}
-            className="w-full text-3xl bg-transparent outline-none text-white placeholder-gray-600 font-mono"
-            min="0"
-          />
-        ) : (
-          <div className="text-3xl text-gray-300 font-mono min-h-10 flex items-center">
-            {isFetchingPrice ? (
-              <Loader2 className="animate-spin h-5 w-5 text-gray-500" />
-            ) : (
-              // Ensure output is displayed cleanly, maybe with fewer decimals if large
-              Number(amount).toFixed(6)
-            )}
-          </div>
-        )}
+  onTokenClick,
+  disabled = false,
+  loading = false,
+}: TokenInputProps) => {
+  return (
+    <div className="bg-black/20 hover:bg-black/40 transition-colors rounded-[20px] p-4 border border-transparent hover:border-white/5 group">
+      <div className="flex justify-between mb-1">
+        <span className="text-gray-400 text-sm font-medium group-focus-within:text-gray-200 transition-colors">{label}</span>
       </div>
 
-      {/* TOKEN SELECTOR */}
-      <select
-        value={token.symbol}
-        onChange={(e) =>
-          onTokenChange(TOKENS.find((t) => t.symbol === e.target.value)!)
-        }
-        className="bg-gray-700 text-white font-bold px-3 py-2 rounded-full cursor-pointer appearance-none pr-8 transition-colors hover:bg-gray-600 text-lg"
-        style={{ backgroundImage: 'none' }} // Remove default select arrow
-        disabled={disabled}
-      >
-        {TOKENS.map((t) => (
-          <option key={t.address} value={t.symbol}>
-            {t.symbol}
-          </option>
-        ))}
-      </select>
-      {/* Custom arrow for select */}
-      <ChevronDown className="h-4 w-4 text-gray-400 absolute right-6 top-1/2 -mt-2 pointer-events-none" />
+      <div className="flex items-center justify-between gap-3">
+        {/* Input Field */}
+        <input
+          type="text"
+          pattern="^[0-9]*[.,]?[0-9]*$"
+          placeholder="0"
+          value={amount}
+          onChange={(e) => {
+            // Only allow numbers and decimals
+            if (e.target.value === '' || /^[0-9]*[.,]?[0-9]*$/.test(e.target.value)) {
+              onAmountChange(e.target.value.replace(',', '.'));
+            }
+          }}
+          className="w-full bg-transparent text-4xl text-white placeholder-gray-600 outline-none font-normal"
+          disabled={disabled}
+        />
+
+        {/* Token Selector Pill (BUTTON-STYLE) */}
+        <button
+          onClick={onTokenClick}
+          className="flex-shrink-0 flex items-center gap-2 bg-black/40 hover:bg-black/60 text-white font-semibold text-xl pl-3 pr-2 py-1.5 rounded-full cursor-pointer transition-all shadow-sm border border-white/5 hover:border-white/20 hover:scale-105 active:scale-95"
+        >
+          {/* Fake Icon Placeholder using first letter */}
+          <div className="w-6 h-6 rounded-full bg-indigo-500/80 flex items-center justify-center text-[10px] font-bold shadow-inner">
+            {token.symbol[0]}
+          </div>
+          <span>{token.symbol}</span>
+          <ChevronDown className="w-5 h-5 text-gray-400" />
+        </button>
+      </div>
+
+      <div className="flex justify-between mt-2 h-5">
+        <span className="text-gray-500 text-sm">
+          {amount ? `$${(Number(amount) * (token.symbol === 'USDC' ? 1 : 1.05)).toFixed(2)}` : ''}
+          {/* Use a fake price multiplier for demo */}
+        </span>
+        {loading && <div className="animate-pulse h-4 w-20 bg-gray-800 rounded"></div>}
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
 
 // --------------------------------------------------
 // MAIN SWAP COMPONENT
@@ -109,9 +103,13 @@ export default function SwapPage() {
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]);
 
+  // MODAL STATE
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectingMode, setSelectingMode] = useState<'in' | 'out'>('in');
+
   // AMOUNTS
   const [amountIn, setAmountIn] = useState('');
-  const [amountOut, setAmountOut] = useState('0');
+  const [amountOut, setAmountOut] = useState('');
   const [isApproved, setIsApproved] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -126,7 +124,7 @@ export default function SwapPage() {
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: [address!, ROUTER_ADDRESS],
-    query: { enabled: !!address, refetchInterval: 5000 }, // Refetch every 5s
+    query: { enabled: !!address, refetchInterval: 5000 },
   });
 
   // 2. PRICE QUOTE (getAmountsOut)
@@ -140,7 +138,7 @@ export default function SwapPage() {
     ],
     query: {
       enabled: !!amountIn && Number(amountIn) > 0 && tokenIn.address !== tokenOut.address,
-      refetchInterval: 8000 // Refetch price every 8s
+      refetchInterval: 8000
     },
   });
 
@@ -153,9 +151,10 @@ export default function SwapPage() {
       // Format to a more readable string
       setAmountOut(Number(formatEther(out)).toFixed(6));
     } else {
-      setAmountOut('0');
+      // Only clear output if input is cleared
+      if (!amountIn) setAmountOut('');
     }
-  }, [amountsOutData]);
+  }, [amountsOutData, amountIn]);
 
   // Check Approval Status
   useEffect(() => {
@@ -166,19 +165,19 @@ export default function SwapPage() {
     try {
       setIsApproved((allowance as bigint) >= parseEther(amountIn));
     } catch {
-      setIsApproved(false); // Handle invalid amountIn state
+      setIsApproved(false);
     }
 
   }, [allowance, amountIn]);
 
-  // Show Success Message and clear input on success
+  // Show Success Message
   useEffect(() => {
     if (isSuccess) {
       setShowSuccess(true);
-      setAmountIn(''); // Clear input after successful swap
-      refetchAllowance(); // Re-check allowance immediately
+      setAmountIn('');
+      refetchAllowance();
       setTimeout(() => setShowSuccess(false), 3000);
-      reset(); // Clear useWriteContract state
+      reset();
     }
   }, [isSuccess, refetchAllowance, reset]);
 
@@ -188,8 +187,29 @@ export default function SwapPage() {
     setTokenIn(tokenOut);
     setTokenOut(tokenIn);
     setAmountIn('');
-    setAmountOut('0');
+    setAmountOut('');
   };
+
+  const openTokenModal = (mode: 'in' | 'out') => {
+    setSelectingMode(mode);
+    setIsModalOpen(true);
+  };
+
+  const handleTokenSelect = (token: Token) => {
+    if (selectingMode === 'in') {
+      if (token.address === tokenOut.address) {
+        setTokenOut(tokenIn); // Swap if selecting same
+      }
+      setTokenIn(token);
+    } else {
+      if (token.address === tokenIn.address) {
+        setTokenIn(tokenOut); // Swap if selecting same
+      }
+      setTokenOut(token);
+    }
+    setIsModalOpen(false);
+  };
+
 
   const approve = () => {
     writeContract({
@@ -201,11 +221,9 @@ export default function SwapPage() {
   };
 
   const handleSwap = () => {
-    // SECURITY: Calculate minimum output with 0.5% slippage
     if (!amountsOutData || Number(amountIn) <= 0) return;
 
     const calculatedAmountOut = (amountsOutData as bigint[])[1];
-    // 0.5% slippage: 995/1000
     const slippageNumerator = 995n;
     const slippageDenominator = 1000n;
     const amountOutMin = (calculatedAmountOut * slippageNumerator) / slippageDenominator;
@@ -216,7 +234,7 @@ export default function SwapPage() {
       functionName: 'swapExactTokensForTokens',
       args: [
         parseEther(amountIn),
-        amountOutMin, // Using calculated slippage
+        amountOutMin,
         [tokenIn.address, tokenOut.address],
         address!,
         BigInt(Math.floor(Date.now() / 1000) + 1200),
@@ -230,100 +248,134 @@ export default function SwapPage() {
   // --- UI RENDER ---
 
   return (
-    <div className="flex justify-center min-h-[80vh] items-center bg-gray-950 text-white p-4">
-      <div className="w-full max-w-md bg-gray-900 border border-gray-800 p-6 rounded-2xl shadow-2xl">
+    <div className="flex flex-col items-center justify-center pt-24 pb-12 px-4 gap-12">
 
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">Token Swap</h2>
-          <RefreshCcw className="h-5 w-5 text-gray-500 cursor-pointer hover:text-white transition-colors" />
-        </div>
+      {/* HERO TEXT */}
+      <h1 className="text-5xl md:text-6xl text-white text-center font-normal tracking-tight">
+        Swap anytime, anywhere.
+      </h1>
 
-        {/* 1. INPUT TOKEN SELECTOR */}
-        <TokenSelector
-          label="You pay"
-          token={tokenIn}
-          amount={amountIn}
-          isInput={true}
-          onAmountChange={setAmountIn}
-          onTokenChange={setTokenIn}
-          disabled={false}
-          isFetchingPrice={false}
-        />
+      {/* SWAP CARD */}
+      <div className="w-full max-w-[480px] relative">
 
-        {/* SWITCH BUTTON */}
-        <div className="flex justify-center -my-3 relative z-10">
-          <button
-            onClick={switchTokens}
-            className="bg-gray-950 p-3 rounded-full border-4 border-gray-900 text-white hover:bg-gray-800 transition-colors shadow-lg"
-            title="Switch Tokens"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-arrow-down-up h-5 w-5"><polyline points="10 13 15 18 20 13" /><path d="M15 18V6" /><polyline points="4 11 9 6 14 11" /><path d="M9 6v12" /></svg>
-          </button>
-        </div>
+        <div className="backdrop-blur-3xl bg-black/40 p-2 rounded-3xl border border-white/10 shadow-2xl relative z-10">
 
-        {/* 2. OUTPUT TOKEN SELECTOR */}
-        <TokenSelector
-          label="You receive (estimated)"
-          token={tokenOut}
-          amount={amountOut}
-          isInput={false}
-          onAmountChange={() => { }} // Disabled for output
-          onTokenChange={setTokenOut}
-          disabled={false}
-          isFetchingPrice={isFetchingPrice}
-        />
-
-        {/* PRICE INFORMATION/DETAILS */}
-        {amountsOutData && (
-          <div className="mt-4 p-3 bg-gray-800 rounded-xl text-sm text-gray-400">
-            <div className="flex justify-between">
-              <span>Price</span>
-              <span className="font-mono">1 {tokenIn.symbol} ≈ {Number(amountIn) > 0 && Number(amountOut) > 0 ? (Number(amountOut) / Number(amountIn)).toFixed(6) : 'N/A'} {tokenOut.symbol}</span>
-            </div>
+          {/* Header inside card (Settings etc) */}
+          <div className="flex justify-between items-center px-4 py-2 mb-2">
+            <span className="text-gray-200 font-medium">Swap</span>
+            <Settings className="text-gray-400 w-5 h-5 cursor-pointer hover:text-white transition-colors" />
           </div>
-        )}
 
-        {/* ACTION BUTTON */}
-        <div className="mt-6">
-          {!isConnected ? (
-            <div className="w-full flex justify-center">
-              <ConnectButton />
+          <div className="flex flex-col gap-1 relative">
+
+            {/* SELL INPUT */}
+            <TokenInput
+              label="Sell"
+              token={tokenIn}
+              amount={amountIn}
+              onAmountChange={setAmountIn}
+              onTokenClick={() => openTokenModal('in')}
+            />
+
+            {/* SWITCHER - Absolute positioned between inputs */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+              <button
+                onClick={switchTokens}
+                className="bg-black/60 backdrop-blur-md border-[4px] border-black/20 p-2 rounded-xl text-gray-400 hover:text-white transition-all hover:scale-110 shadow-lg"
+              >
+                <ArrowDown size={20} />
+              </button>
             </div>
-          ) : !isApproved ? (
-            <button
-              onClick={approve}
-              disabled={isButtonDisabled}
-              className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-500 text-white'
-                }`}
-            >
-              {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
-              {isApproving ? 'Confirming Approval...' : `Approve ${tokenIn.symbol}`}
-            </button>
-          ) : (
-            <button
-              onClick={handleSwap}
-              disabled={isButtonDisabled}
-              className={`w-full py-4 rounded-xl font-bold text-lg transition-colors flex justify-center items-center gap-2 ${isButtonDisabled
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-pink-600 hover:bg-pink-500 text-white'
-                }`}
-            >
-              {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
-              {isApproving ? 'Confirming Swap...' : 'Swap'}
-            </button>
+
+            {/* BUY INPUT */}
+            <TokenInput
+              label="Buy"
+              token={tokenOut}
+              amount={amountOut}
+              onAmountChange={() => { }} // Read only basically
+              onTokenClick={() => openTokenModal('out')}
+              disabled={true}
+              loading={isFetchingPrice}
+            />
+
+          </div>
+
+          {/* ACTION BUTTON */}
+          <div className="mt-2">
+            {!isConnected ? (
+              <div className="w-full [&>button]:w-full [&>button]:!bg-[#311c31]/80 [&>button]:!backdrop-blur-sm [&>button]:!text-[#fc72ff] [&>button]:!font-bold [&>button]:!h-14 [&>button]:!rounded-2xl">
+                <ConnectButton.Custom>
+                  {({ openConnectModal }) => (
+                    <button onClick={openConnectModal} className="w-full bg-[#311c31]/80 backdrop-blur-sm text-[#fc72ff] h-14 rounded-2xl font-bold text-xl hover:opacity-90 transition-opacity">
+                      Connect Wallet
+                    </button>
+                  )}
+                </ConnectButton.Custom>
+              </div>
+            ) : !isApproved && amountIn ? (
+              <button
+                onClick={approve}
+                disabled={isButtonDisabled}
+                className="w-full bg-[#311c31]/80 backdrop-blur-sm hover:bg-[#311c31] text-[#fc72ff] h-14 rounded-2xl font-bold text-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
+              >
+                {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
+                {isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
+              </button>
+            ) : (
+              <button
+                onClick={handleSwap}
+                disabled={isButtonDisabled}
+                className={`w-full h-14 rounded-2xl font-bold text-xl transition-all flex justify-center items-center gap-2 ${isButtonDisabled
+                    ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+                    : 'bg-[#fc72ff] hover:bg-[#fc72ff]/90 text-white shadow-[0_0_30px_rgba(252,114,255,0.4)]'
+                  }`}
+              >
+                {isApproving && <Loader2 className="animate-spin h-5 w-5" />}
+                {Number(amountIn) > 0 ? (isApproving ? 'Swapping...' : 'Swap') : 'Enter an amount'}
+              </button>
+            )}
+          </div>
+
+          {/* Output Info */}
+          {amountsOutData && (
+            <div className="mt-3 px-2 flex justify-between text-xs text-gray-500 font-medium">
+              <span>1 {tokenIn.symbol} = {Number(amountIn) > 0 && Number(amountOut) > 0 ? (Number(amountOut) / Number(amountIn)).toFixed(5) : '-'} {tokenOut.symbol}</span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                $0 gas
+              </span>
+            </div>
           )}
+
         </div>
 
-        {/* STATUS MESSAGES */}
-        {showSuccess && <div className="mt-4 p-3 bg-green-900/50 border border-green-700 text-green-300 rounded-lg text-center text-sm animate-pulse">✅ Transaction Successful!</div>}
-        {(error || isTxError) && (
-          <div className="mt-4 p-3 bg-red-900/50 border border-red-700 text-red-300 rounded-lg text-sm wrap-break-word">
-            Error: {error ? error.message.split('\n')[0] : 'Transaction failed.'}
+        {/* STATUS TOAST */}
+        {showSuccess && (
+          <div className="absolute -bottom-16 left-0 right-0 mx-auto w-max bg-green-500/20 text-green-400 border border-green-500/50 px-4 py-2 rounded-xl flex items-center gap-2 backdrop-blur-md animate-fade-in-up shadow-lg shadow-green-900/20">
+            ✅ Swap Successful!
           </div>
         )}
+
+        {(error || isTxError) && (
+          <div className="absolute -bottom-20 left-0 right-0 mx-auto w-full bg-red-500/10 text-red-400 border border-red-500/50 px-4 py-3 rounded-xl backdrop-blur-md text-sm shadow-lg shadow-red-900/20">
+            Error: {error ? error.message.split('\n')[0].slice(0, 60) + '...' : 'Transaction failed'}
+          </div>
+        )}
+
       </div>
+
+      <div className="text-gray-500 text-sm font-medium mt-8 max-w-lg text-center leading-relaxed">
+        Buy and sell crypto on 16+ networks including Ethereum, Unichain, and Base.
+      </div>
+
+      {/* GLOBAL MODAL */}
+      <TokenModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSelect={handleTokenSelect}
+        selectedToken={selectingMode === 'in' ? tokenIn : tokenOut}
+      />
+
     </div>
   );
 }
